@@ -85,41 +85,6 @@ class SecurityParameters:
         print(f'q = {self.rfp:.5f} / 1-q = {1-self.rfp:.5f}\n')
 
 
-class OptionParameters:
-    '''Encapsulates parameters for the option'''
-    def __init__(self):
-        self.type  = TYPE
-        self.opt   = OPT
-        self.strike = K
-        self.expir  = EXPO
-        self.flags  = [1.0, 'E']
-        self._set_option_flags()
-
-
-    def print_summary(self):
-        '''Prints summary parameters to std out'''
-        print(f'{str.capitalize(self.type)} {self.opt} option')
-        print(f'Expiration: {self.expir}')
-        print(f'Strike price={self.strike}')
-        print()
-
-
-    def _set_option_flags(self):
-        '''Sets option flags for call/put & european/american'''
-        if str.lower(self.opt) == 'put':
-            self.flags[0] = -1.0
-        elif str.lower(self.opt) != 'call':
-            raise Exception(f'OPT should be "call" or "put". Its value is: "{OPT}"')
-        if str.lower(self.type) == 'american':
-            self.flags[1] = 'A'
-        elif str.lower(self.type) != 'european':
-            raise Exception(f'TYPE should be "european" or "american". Its value is: "{TYPE}"')
-
-        # American call options are priced as European
-        if self.flags[0] == 1:
-            self.flags[1]='E'
-
-
 class Lattice:
     ''' Lattice superclass encapsulates parameters and functionality
         for all lattices'''
@@ -143,20 +108,29 @@ class Lattice:
         print(pd.DataFrame(self.lattice).loc[::-1])
         # print()
 
+
     def price_to_stdout(self):
         '''Prints derivative price to stdout'''
         print(f'C0={self.lattice[0][0]:.2f}')
 
 
+
 class Options(Lattice):
     ''' Options lattice / subclass of Lattice'''
-    def __init__(self, underlying, sec_par, opt_par):
-        Lattice.__init__(self, opt_par.expir)
-        self._build(underlying, sec_par, opt_par)
+    def __init__(self, underlying, sec_par):
+        self.type  = TYPE
+        self.opt   = OPT
+        self.strike = K
+        self.expir  = EXPO
+        self.flags  = [1.0, 'E']
+        Lattice.__init__(self, self.expir)
+        self._set_option_flags()
+        self._build(underlying, sec_par)
 
-    def _build(self, underlying, sec_par, opt_par):
-        strike = opt_par.strike
-        flag   = opt_par.flags[0]
+
+    def _build(self, underlying, sec_par):
+        strike = self.strike
+        flag   = self.flags[0]
         rfp    = sec_par.rfp
         for period in range(self.size, -1, -1):
             for option in range(period, -1, -1):
@@ -169,7 +143,7 @@ class Options(Lattice):
                     ratio = num/denom
 
                     ex_val = strike - underlying.lattice[option][period] # exercise value
-                    if opt_par.flags[1] == 'E':
+                    if self.flags[1] == 'E':
                         self.lattice[option][period] = ratio
                     else: # American option
                         self.lattice[option][period] = max(ex_val, ratio)
@@ -177,11 +151,36 @@ class Options(Lattice):
                             print(f'Exercizing option {option}/t={period} {ex_val:.2f}>{ratio:.2f}')
 
 
+    def _set_option_flags(self):
+        '''Sets option flags for call/put & european/american'''
+        if str.lower(self.opt) == 'put':
+            self.flags[0] = -1.0
+        elif str.lower(self.opt) != 'call':
+            raise Exception(f'OPT should be "call" or "put". Its value is: "{OPT}"')
+        if str.lower(self.type) == 'american':
+            self.flags[1] = 'A'
+        elif str.lower(self.type) != 'european':
+            raise Exception(f'TYPE should be "european" or "american". Its value is: "{TYPE}"')
+
+        # American call options are priced as European
+        if self.flags[0] == 1:
+            self.flags[1]='E'
+
+
+    def print_summary(self):
+        '''Prints summary parameters to std out'''
+        print(f'{str.capitalize(self.type)} {self.opt} option')
+        print(f'Expiration: {self.expir}')
+        print(f'Strike price={self.strike}')
+        print()
+
+
 class Futures(Lattice):
     ''' Shares lattice / subclass of Lattice'''
     def __init__(self, underlying, sec_par):
         Lattice.__init__(self, sec_par.n_periods)
         self._build(underlying, sec_par)
+
 
     def _build(self, underlying, sec_par):
         for period in range(self.size, -1, -1):
@@ -212,18 +211,19 @@ class Shares(Lattice):
                     s_prev = self.lattice[share-1][period-1]
                     self.lattice[share][period] = sec_par.r_ud[0]*s_prev
 
+
+
 def results_to_stdout():
     '''Prints results to screen'''
     sec.print_summary()
     print()
-    opt.print_summary()
+    options.print_summary()
     options.price_to_stdout()
 
 
 if __name__ == '__main__':
     # Load parameters
     sec = SecurityParameters()
-    opt = OptionParameters()
 
     sec.echo_model_parameters()
     sec.echo_risk_free_probability()
@@ -236,7 +236,10 @@ if __name__ == '__main__':
         futures = Futures(shares, sec)
 
     # Options lattice
-    options = Options(futures, sec, opt)
+    if FUTURES_FLAG:
+        options = Options(futures, sec)
+    else:
+        options = Options(shares, sec)
 
     if LATTICE_FLAG:
         shares.lattice_to_stdout('Shares')
@@ -245,5 +248,3 @@ if __name__ == '__main__':
         options.lattice_to_stdout('Options')
 
     results_to_stdout()
-
-
