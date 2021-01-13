@@ -26,14 +26,14 @@ D    = 0.01 # dividend yield
 # Option parameters
 K    = 100.0 # strike price
 OPT  = 'put' # call or put option
-TYPE = 'american' # option type: european or american
+TYPE = 'european' # option type: european or american
 EXPO = 10 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
 
 # Futures parameters
 #EXPF = 10 # expiration
 #### END PARAMETERS ####
 
-class Security:
+class SecurityParameters:
     '''Encapsulates parameters for the underlying security'''
 
     def __init__(self):
@@ -82,17 +82,17 @@ class Security:
 
     def echo_risk_free_probability(self):
         '''prints risk-free probability q to stdout'''
-        print(f'q = {self.rfp:.4f} / 1-q = {1-self.rfp:.4f}\n')
+        print(f'q = {self.rfp:.5f} / 1-q = {1-self.rfp:.5f}\n')
 
 
-class Option:
+class OptionParameters:
     '''Encapsulates parameters for the option'''
     def __init__(self):
-        self.type = TYPE
-        self.opt  = OPT
-        self.stike = K
-        self.expir = EXPO
-        self.flags = [1.0, 'E']
+        self.type  = TYPE
+        self.opt   = OPT
+        self.strike = K
+        self.expir  = EXPO
+        self.flags  = [1.0, 'E']
         self._set_option_flags()
 
 
@@ -100,7 +100,7 @@ class Option:
         '''Prints summary parameters to std out'''
         print(f'{str.capitalize(self.type)} {self.opt} option')
         print(f'Expiration: {self.expir}')
-        print(f'Flags={self.flags}')
+        print(f'Strike price={self.strike}')
         print()
 
 
@@ -143,173 +143,107 @@ class Lattice:
         print(pd.DataFrame(self.lattice).loc[::-1])
         # print()
 
+    def price_to_stdout(self):
+        '''Prints derivative price to stdout'''
+        print(f'C0={self.lattice[0][0]:.2f}')
+
 
 class Options(Lattice):
-    ''' Options lattice'''
-    def __init__(self, underlying, option):
-        Lattice.__init__(self, option.expir)
+    ''' Options lattice / subclass of Lattice'''
+    def __init__(self, underlying, sec_par, opt_par):
+        Lattice.__init__(self, opt_par.expir)
+        self._build(underlying, sec_par, opt_par)
 
-    def _build(self, underlying, option):
-        for period in range(EXPO, -1, -1):
+    def _build(self, underlying, sec_par, opt_par):
+        strike = opt_par.strike
+        flag   = opt_par.flags[0]
+        rfp    = sec_par.rfp
+        for period in range(self.size, -1, -1):
             for option in range(period, -1, -1):
                 if period == self.size:
-                    payoff[option][period] = max(flag*(lattice[option][period]-K), 0.)
+                    comp = underlying.lattice[option][period]-strike
+                    self.lattice[option][period] = max(flag*comp, 0.)
                 else:
-                    num   = back_prop(payoff, option, period, proba)
-                    denom = math.exp(R*T/EXPO)
+                    num   = self.back_prop(option, period, rfp)
+                    denom = math.exp(sec_par.rate*sec_par.maturity/self.size)
                     ratio = num/denom
-                    e_value = K - lattice[option][period] # exercise value
-                    if option_flags[1] == 'E':
-                        payoff[option][period] = ratio
+
+                    ex_val = strike - underlying.lattice[option][period] # exercise value
+                    if opt_par.flags[1] == 'E':
+                        self.lattice[option][period] = ratio
                     else: # American option
-                        payoff[option][period] = max(e_value, ratio)
-                        if e_value > ratio:
-                            print(f'Exercising option {option}/t={period} {e_value:.2f}>{ratio:.2f}')
-
-
-
-class Shares(Lattice):
-    ''' Shares lattice'''
-    def __init__(self, security):
-        Lattice.__init__(self, security.n_periods)
-        self._build(security)
-
-
-    def _build(self, security):
-        self.lattice[0][0] = security.init
-        for period in range(1, self.size+1):
-            for share in range(0, period+1):
-                if share == 0:
-                    s_prev = self.lattice[share][period-1]
-                    self.lattice[share][period] = security.r_ud[1]*s_prev
-                else:
-                    s_prev = self.lattice[share-1][period-1]
-                    self.lattice[share][period] = security.r_ud[0]*s_prev
+                        self.lattice[option][period] = max(ex_val, ratio)
+                        if ex_val > ratio:
+                            print(f'Exercizing option {option}/t={period} {ex_val:.2f}>{ratio:.2f}')
 
 
 class Futures(Lattice):
-    ''' Shares lattice'''
-    def __init__(self, underlying, security):
-        Lattice.__init__(self, security.n_periods)
-        self._build(underlying, security)
+    ''' Shares lattice / subclass of Lattice'''
+    def __init__(self, underlying, sec_par):
+        Lattice.__init__(self, sec_par.n_periods)
+        self._build(underlying, sec_par)
 
-    def _build(self, underlying, security):
+    def _build(self, underlying, sec_par):
         for period in range(self.size, -1, -1):
             for option in range(period, -1, -1):
                 if period == self.size: # F_T = S_T at maturity
                     self.lattice[option][period] = underlying.lattice[option][period]
                 else:
-                    rfp = security.rfp
+                    rfp = sec_par.rfp
                     self.lattice[option][period] = self.back_prop(option, period, rfp)
 
 
 
-
-def option_lattice(lattice, proba, option_flags):
-    ''' Compute options lattice from shares or futures lattice
-        Computes american put option price'''
-    payoff = initialize_matrix(EXPO)
-    flag   = option_flags[0]
-
-    for period in range(EXPO, -1, -1):
-        for option in range(period, -1, -1):
-            if period == EXPO:
-                payoff[option][period] = max(flag*(lattice[option][period]-K), 0.)
-            else:
-                num   = back_prop(payoff, option, period, proba)
-                denom = math.exp(R*T/EXPO)
-                ratio = num/denom
-                e_value = K - lattice[option][period] # exercise value
-                if option_flags[1] == 'E':
-                    payoff[option][period] = ratio
-                else: # American option
-                    payoff[option][period] = max(e_value, ratio)
-                    if e_value > ratio:
-                        print(f'Exercising option {option}/t={period} {e_value:.2f}>{ratio:.2f}')
-
-    return payoff
+class Shares(Lattice):
+    ''' Shares lattice / subclass of Lattice'''
+    def __init__(self, sec_par):
+        Lattice.__init__(self, sec_par.n_periods)
+        self._build(sec_par)
 
 
-#### standard out routines ####
-# def summarize_run():
-#     '''Prints summary input data to std out'''
-#     print(f'Computing price for {TYPE} {OPT} option')
-#     print(f'Initial price: {S0}')
-#     print(f'Strike price: {K}')
-#     print(f'Maturity: {T} years / {N} periods')
-#     print(f'Risk-free rate: {100*R:.2f}% / dividend yield: {100*D:.2f}%')
-#     print(f'Volatility {100*SIG:.2f}%')
-#     print()
+    def _build(self, sec_par):
+        self.lattice[0][0] = sec_par.init
+        for period in range(1, self.size+1):
+            for share in range(0, period+1):
+                if share == 0:
+                    s_prev = self.lattice[share][period-1]
+                    self.lattice[share][period] = sec_par.r_ud[1]*s_prev
+                else:
+                    s_prev = self.lattice[share-1][period-1]
+                    self.lattice[share][period] = sec_par.r_ud[0]*s_prev
 
-
-# def lattice_to_stdout(lattice, title):
-#     '''Prints lattice to stdout'''
-#     print(f'{title} lattice:')
-#     print(pd.DataFrame(lattice).loc[::-1])
-#     print()
-#### END standard out routines ####
-
-
-def set_option_flags():
-    '''Sets option flags for call/put & european/american'''
-    flags = [1.0, 'E'] # initialize option flags to European call
-    if str.lower(OPT) == 'put':
-        flags[0] = -1.0
-    elif str.lower(OPT) != 'call':
-        raise Exception(f'OPT should be "call" or "put". Its value is: "{OPT}"')
-    if str.lower(TYPE) == 'american':
-        flags[1] = 'A'
-    elif str.lower(TYPE) != 'european':
-        raise Exception(f'TYPE should be "european" or "american". Its value is: "{TYPE}"')
-
-    # American call options are priced as European
-    if flags[0] == 1:
-        flags[1]='E'
-
-    return flags
+def results_to_stdout():
+    '''Prints results to screen'''
+    sec.print_summary()
+    print()
+    opt.print_summary()
+    options.price_to_stdout()
 
 
 if __name__ == '__main__':
-    sec = Security()
+    # Load parameters
+    sec = SecurityParameters()
+    opt = OptionParameters()
+
     sec.echo_model_parameters()
     sec.echo_risk_free_probability()
 
-    opt = Option()
-    sec.print_summary()
-    opt.print_summary()
-
+    # Security lattice
     shares = Shares(sec)
-    shares.lattice_to_stdout('Shares')
 
-    futures = Futures(shares, sec)
-    futures.lattice_to_stdout('Futures')
+    # Futures lattice
+    if FUTURES_FLAG:
+        futures = Futures(shares, sec)
+
+    # Options lattice
+    options = Options(futures, sec, opt)
+
+    if LATTICE_FLAG:
+        shares.lattice_to_stdout('Shares')
+        if FUTURES_FLAG:
+            futures.lattice_to_stdout('Futures')
+        options.lattice_to_stdout('Options')
+
+    results_to_stdout()
 
 
-
-    #x=1/0
-    #summarize_run()
-
-    #OPT_FLAGS = set_option_flags() # call/put & european/american
-
-    #params = binomial_model_parameter() # u, d
-    #rf_q   = risk_free_proba(params) # q
-
-    # compute share values lattice
-    #S = share_lattice(params)
-
-    # compute futures values lattice
-    # if FUTURES_FLAG:
-    #     F = futures_lattice(S, rf_q)
-
-    # # compute option price lattice
-    # if FUTURES_FLAG: #compute option pricing from futures
-    #     P = option_lattice(F, rf_q, OPT_FLAGS)
-    # else: # compute option pricing from shares
-    #     P = option_lattice(S, rf_q, OPT_FLAGS)
-
-    # if LATTICE_FLAG:
-    #     lattice_to_stdout(S, 'Share')
-    #     if FUTURES_FLAG:
-    #         lattice_to_stdout(F, 'Futures')
-    #     lattice_to_stdout(P, 'Option')
-    # print(f'C0={P[0][0]:.2f}')
