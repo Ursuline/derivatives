@@ -146,7 +146,7 @@ class Options(Lattice):
 
         for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
-                if state == self.size:
+                if period == self.size:
                     comp = underlying.lattice[state][period]-strike
                     self.lattice[state][period] = max(flag*comp, 0.)
                 else:
@@ -161,7 +161,7 @@ class Options(Lattice):
                     else: # American option
                         self.lattice[state][period] = max(ex_val, ratio)
                         if ex_val > ratio:
-                            print(f'Exercizing option {option}/t={period} {ex_val:.2f}>{ratio:.2f}')
+                            print(f'Exercizing option {state}/t={period} {ex_val:.2f}>{ratio:.2f}')
 
 
     def _set_option_flags(self):
