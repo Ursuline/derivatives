@@ -23,18 +23,15 @@ N    = 5
 ZCB_MAT = 4
 
 # Option parameters
-K    = 110.0 # strike price
+K    = 88.0 # strike price
 OPT  = 'put' # call or put option
 TYPE = 'American' # option type: european or american
-EXPO = 15 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
+EXPO = 3 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
 
-# Futures parameters
-#EXPF = 10 # expiration
-#### END PARAMETERS ####
 
 class TermStructureParameters:
     '''Encapsulates parameters for the underlying security'''
-    # pylint: disable=too-many-instance-attributes
+    # pylint: disable=too-few-public-methods
 
     def __init__(self):
         self.init      = R_00
@@ -60,9 +57,11 @@ class ShortRate(op.Lattice):
                     s_prev = self.lattice[share-1][period-1]
                     self.lattice[share][period] = sec_par.r_ud[0]*s_prev
 
+
+
 class ZCB(op.Lattice):
     '''Zero-coupon bond lattice / subclass of Lattice'''
-    def __init__(self, sh_rate, ts_par, bond_maturity):
+    def __init__(self, sh_rate, ts_par):
         self.bond_maturity = ZCB_MAT
         super().__init__(self.bond_maturity)
         self._build(sh_rate, ts_par)
@@ -89,3 +88,7 @@ if __name__ == '__main__':
 
     zcb = ZCB(short_rate, term_st)
     zcb.lattice_to_stdout('ZCB')
+
+    option_params = op.OptionParameters(OPT, TYPE, K, EXPO)
+    opt = op.Options(zcb, term_st, option_params)
+    opt.lattice_to_stdout('Zero option value')
