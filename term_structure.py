@@ -15,18 +15,18 @@ LATTICE_FLAG = True # print lattice to stdout
 
 # Lattice parameters:
 R_00 = .06 # initial price
-r_ud = [1.25, .9]
-rnp  = [.5, .5] # risk-neutral probabilities
+R_UD = [1.25, .9]
+RNP  = [.5, .5] # risk-neutral probabilities
 N    = 5
 
 # ZCB PARAMETERS
 ZCB_MAT = 4
 
 # Option parameters
-K    = 88.0 # strike price
+K    = 84.0 # strike price
 OPT  = 'put' # call or put option
-TYPE = 'American' # option type: european or american
-EXPO = 3 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
+TYPE = 'european' # option type: european or american
+EXPO = 2 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
 
 
 class TermStructureParameters:
@@ -36,8 +36,17 @@ class TermStructureParameters:
     def __init__(self):
         self.init      = R_00
         self.n_periods = N
-        self.r_ud      = r_ud
-        self.rnp       = rnp
+        self.r_ud      = R_UD
+        self.rnp       = RNP
+
+    def describe(self):
+        ''' Prints summary parameters to stdout '''
+        print(f'Initial price: {self.init}')
+        print(f'{self.n_periods} periods')
+        print(f'RUp-down rate: {self.r_ud}')
+        print(f'Risk-neutral probability: {self.rnp}')
+
+
 
 class ShortRate(op.Lattice):
     ''' Short rate lattice / subclass of Lattice'''
@@ -52,10 +61,10 @@ class ShortRate(op.Lattice):
             for share in range(0, period+1):
                 if share == 0:
                     s_prev = self.lattice[share][period-1]
-                    self.lattice[share][period] = sec_par.r_ud[1]*s_prev
+                    self.lattice[share][period] = sec_par.r_ud[1] * s_prev
                 else:
                     s_prev = self.lattice[share-1][period-1]
-                    self.lattice[share][period] = sec_par.r_ud[0]*s_prev
+                    self.lattice[share][period] = sec_par.r_ud[0] * s_prev
 
 
 
@@ -80,15 +89,57 @@ class ZCB(op.Lattice):
 
 
 
+class ZCBOptions(op.Options):
+    ''' Options for Zero coupon bonds / Subclass of Options '''
+
+
+    def build(self, underlying, ts_par, opt_par, sh_rate):
+        ''' Over rides Options build method '''
+        self._set_option_flags(opt_par)
+        strike = opt_par.strike
+        flag   = self.flags[0]
+        rnp    = ts_par.rnp
+        print(strike, flag, rnp, self.size)
+
+        for period in range(self.size, -1, -1):
+            for state in range(period, -1, -1):
+                if period == self.size:
+                    comp = max(0., flag*(underlying.lattice[state][period]-strike))
+                    self.lattice[state][period] = comp
+                else :
+                    if self.flags[1] == 'E': # european options
+                        p_1 = self.lattice[state+1][period+1]
+                        p_2 = self.lattice[state][period+1]
+                        num = rnp[0] * p_1 + rnp[1] * p_2
+                        denom = 1. + sh_rate.lattice[state][period]
+                        self.lattice[state][period] = num / denom
+                    else: # american options
+                        pass
+
+
+
+def print_results(sec_p, opt_p, opt):
+    '''Prints final results to screen'''
+
+    print('\n*** Option price from security ***\n')
+    sec_p.describe()
+    print()
+    opt_p.describe()
+    opt.print_price()
+
+
 if __name__ == '__main__':
     # Load underlying security-related parameters
     term_st    = TermStructureParameters()
     short_rate = ShortRate(term_st)
-    short_rate.lattice_to_stdout('Short-rate', True)
+    short_rate.print_lattice('Short-rate', True)
 
     zcb = ZCB(short_rate, term_st)
-    zcb.lattice_to_stdout('ZCB')
+    zcb.print_lattice('ZCB')
 
     option_params = op.OptionParameters(OPT, TYPE, K, EXPO)
-    opt = op.Options(zcb, term_st, option_params)
-    opt.lattice_to_stdout('Zero option value')
+    opt = ZCBOptions(option_params)
+    opt.build(zcb, term_st, option_params, short_rate)
+    opt.print_lattice('Zero option value')
+
+    print_results(term_st, option_params, opt)
