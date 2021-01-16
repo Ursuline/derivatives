@@ -207,7 +207,7 @@ class Options(Lattice):
         if str.lower(opt_par.type) == 'american':
             self.flags[1] = 'A'
         elif str.lower(opt_par.type) != 'european':
-            raise Exception(f'TYPE should be "european" or "american". Its value is: "{TYPE}"')
+            raise Exception(f'TYPE should be "european" or "american". Its value is: "{opt_par.type}"')
 
 
 
