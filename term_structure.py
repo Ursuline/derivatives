@@ -3,11 +3,11 @@
 """
 Created on Fri Jan 15 11:33:54 2021
 
+This follows
+
 @author: charles mégnin
 """
 
-# import math
-# import pandas as pd
 import options as op
 
 #### PARAMETERS ####
@@ -23,10 +23,10 @@ N    = 5
 ZCB_MAT = 4
 
 # Option parameters
-K    = 84.0 # strike price
+K    = 88.0 # strike price
 OPT  = 'put' # call or put option
-TYPE = 'european' # option type: european or american
-EXPO = 2 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
+TYPE = 'american' # option type: european or american
+EXPO = 3 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
 
 
 class TermStructureParameters:
@@ -92,7 +92,6 @@ class ZCB(op.Lattice):
 class ZCBOptions(op.Options):
     ''' Options for Zero coupon bonds / Subclass of Options '''
 
-
     def build(self, underlying, ts_par, opt_par, sh_rate):
         ''' Over rides Options build method '''
         self._set_option_flags(opt_par)
@@ -114,18 +113,27 @@ class ZCBOptions(op.Options):
                         denom = 1. + sh_rate.lattice[state][period]
                         self.lattice[state][period] = num / denom
                     else: # american options
-                        pass
+                        # Exercise value:
+                        e_val = flag*(underlying.lattice[state][period]-strike)
+
+                        num   = rnp[0]*self.lattice[state+1][period+1]
+                        num  += rnp[1]*self.lattice[state][period+1]
+                        denom = 1. + sh_rate.lattice[state][period]
+                        c_val = num / denom
+
+                        self.lattice[state][period] = max(e_val, c_val)
 
 
 
-def print_results(sec_p, opt_p, opt):
+def print_results(sec_p, opt_p, zcb_opt):
     '''Prints final results to screen'''
 
     print('\n*** Option price from security ***\n')
     sec_p.describe()
     print()
     opt_p.describe()
-    opt.print_price()
+    zcb_opt.print_price()
+
 
 
 if __name__ == '__main__':
