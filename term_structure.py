@@ -27,16 +27,37 @@ N    = 5
 # ZCB PARAMETERS
 ZCB_MAT = 4
 
+#SWAP PARAMETERS
+FIXED_RATE   = .05
+SWAP_EXP     = 6
+SWAP_ARREARS = True # should be left as True
+
 # CAPLETS/FLOORLETS PARAMETERS
-LIBOR   = .1
-CF_EXP  = 6
-ARREARS = True # should probably be left as True
+LIBOR      = .1
+CF_EXP     = 6
+CF_ARREARS = True # should be left as True
 
 # Option parameters
 K    = 88.0 # strike price
 OPT  = 'put' # call or put option
 TYPE = 'american' # option type: european or american
 EXPO = 3 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
+
+
+class SWAPParameters():
+    '''Encapsulates parameters for swaps'''
+    # pylint: disable=too-few-public-methods
+
+    def __init__(self):
+        self.fixed_rate = FIXED_RATE
+        self.arrears    = SWAP_ARREARS
+        self.expiration = SWAP_EXP
+
+    def describe(self):
+        ''' Prints summary parameters to stdout '''
+        print(f'Fixed rate: {self.fixed_rate}')
+        print(f'{self.expiration} periods')
+
 
 
 class TermStructureParameters:
@@ -59,7 +80,7 @@ class TermStructureParameters:
 
 
 class ShortRate(op.Lattice):
-    ''' Short rate lattice / subclass of Lattice'''
+    ''' Short rate lattice '''
     def __init__(self, sec_par):
         super().__init__(sec_par.n_periods)
         self._build(sec_par)
@@ -79,7 +100,7 @@ class ShortRate(op.Lattice):
 
 
 class ZCB(op.Lattice):
-    '''Zero-coupon bond lattice / subclass of Lattice'''
+    ''' Zero-coupon bond lattice '''
     def __init__(self, sh_rate, ts_par):
         self.bond_maturity = ZCB_MAT
         super().__init__(self.bond_maturity)
@@ -128,7 +149,7 @@ class ZCBOptions(op.Options):
 
                         num   = rnp[0]*self.lattice[state+1][period+1]
                         num  += rnp[1]*self.lattice[state][period+1]
-                        denom = 1. + sh_rate.lattice[state][period]
+                        denom = 1.0 + sh_rate.lattice[state][period]
                         c_val = num / denom
 
                         self.lattice[state][period] = max(e_val, c_val)
@@ -147,7 +168,7 @@ class CFParameters():
         self.libor = LIBOR
         self.matur = CF_EXP
         self.type  = DERIVATIVE
-        self.arrears = ARREARS
+        self.arrears = CF_ARREARS
 
 
     def describe(self):
@@ -159,7 +180,7 @@ class CFParameters():
 
 
 class CapFloorLet(op.Lattice):
-    ''' Options for caplets & floorlets / Subclass of Lattice '''
+    ''' caplets & floorlets / Subclass of Lattice '''
 
     def __init__(self, cf_parameters):
         self.cf_parameters = cf_parameters
@@ -184,28 +205,60 @@ class CapFloorLet(op.Lattice):
 
     def build(self, ts_par, sh_rate):
         flag = self.flag # caplet or floorlet
+        rate = self.libor
         for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
                 if period == self.size:
-                    num = flag*(sh_rate.lattice[state][period] - self.libor)
+                    num = flag*(sh_rate.lattice[state][period] - rate)
                     denom = 1 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
                 else:
                     num  = ts_par.rnp[0] * self.lattice[state + 1][period + 1]
                     num += ts_par.rnp[1] * self.lattice[state][period + 1]
-                    denom = 1 + sh_rate.lattice[state][period]
+                    denom = 1.0 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
 
 
     def describe(self):
-        print('\n*** Option price from security ***\n')
+        print('\n*** Caplet/floorlet price ***\n')
         self.cf_parameters.describe()
+        self.print_price(True)
+
+
+class SWAP(op.Lattice):
+    '''Swap lattice '''
+    def __init__(self, swap_par):
+        self.swap_parameters = swap_par
+        super().__init__(swap_par.expiration)
+        if self.swap_parameters.arrears == True:
+            self.size -= 1
+
+
+    def build(self, ts_par, sh_rate): # build the lattice
+        rate = self.swap_parameters.fixed_rate
+        for period in range(self.size, -1, -1):
+            for state in range(period, -1, -1):
+                if period == self.size:
+                    num  = sh_rate.lattice[state][period] - rate
+                    denom = 1.0 + sh_rate.lattice[state][period]
+                    self.lattice[state][period] = num / denom
+                else:
+                    num  = sh_rate.lattice[state][period]-rate
+                    num += ts_par.rnp[0] * self.lattice[state + 1][period + 1]
+                    num += ts_par.rnp[1] * self.lattice[state][period + 1]
+                    denom = 1.0 + sh_rate.lattice[state][period]
+                    self.lattice[state][period] = num / denom
+
+
+    def describe(self):
+        print('\n*** Swap price ***\n')
+        self.swap_parameters.describe()
         self.print_price(True)
 
 
 
 if __name__ == '__main__':
-    DERIVATIVE   = 'floorlet' # either of zcb, caplet or floorlet
+    DERIVATIVE   = 'swap' # either of zcb, caplet, floorlet, swap or swaption
     LATTICE_FLAG = True # print lattice to stdout
 
     DERIVATIVE = str.lower(DERIVATIVE)
@@ -232,6 +285,14 @@ if __name__ == '__main__':
         if LATTICE_FLAG:
             cf_let.print_lattice(str.capitalize(DERIVATIVE), True)
         cf_let.describe()
+    elif DERIVATIVE == 'swap':
+        swap_params = SWAPParameters()
+        swap = SWAP(swap_params)
+        swap.build(term_params, short_rates)
+        if LATTICE_FLAG:
+            swap.print_lattice(str.capitalize(DERIVATIVE), True)
+        swap.describe()
+
     else:
         raise Exception(f'DERIVATIVE should be "zcb", "caplet" or "floorlet". Its value is: "{DERIVATIVE}"')
 
