@@ -32,7 +32,7 @@ ZCB_MAT = 4
 LIBOR   = .02
 CF_EXP  = 6
 CF_TYPE = 'caplet' # either of caplet or floorlet
-ARREARS = True
+ARREARS = True # should probably be left as True
 
 # Option parameters
 K    = 88.0 # strike price
@@ -185,9 +185,9 @@ class CapFloorLet(op.Lattice):
 
 
     def build(self, ts_par, sh_rate):
-        for period in range(self.size-1, -1, -1):
+        for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
-                if period == self.size-1:
+                if period == self.size:
                     num = sh_rate.lattice[state][period] - self.libor
                     denom = 1 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
@@ -226,8 +226,8 @@ if __name__ == '__main__':
         cf_params = CFParameters()
         cf_let = CapFloorLet(cf_params)
         cf_let.build(term_params, short_rates)
+        cf_let.print_lattice('Caplet', True)
         cf_let.describe()
-
     else:
         raise Exception(f'DERIVATIVE should be "zcb", "caplet" or "floorlet". Its value is: "{DERIVATIVE}"')
 
