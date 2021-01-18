@@ -13,7 +13,7 @@ https://www.coursera.org/learn/financial-engineering-1/home/welcome
 
 @author: charles mégnin
 """
-
+import lattice as lt
 import options as op
 
 #### PARAMETERS ####
@@ -22,67 +22,83 @@ import options as op
 R_00 = .06 # initial price
 R_UD = [1.25, .9]
 RNP  = [.5, .5] # risk-neutral probabilities
-N    = 5
+NPER = 5
 
 # ZCB PARAMETERS
-ZCB_MAT = 4
+ZCB_NPER = 4
 
 #SWAP PARAMETERS
 FIXED_RATE   = .05
-SWAP_EXP     = 6
+SWAP_NPER    = 6
 SWAP_ARREARS = True # should be left as True
 
 # CAPLETS/FLOORLETS PARAMETERS
 LIBOR      = .1
-CF_EXP     = 6
+CF_NPER    = 6
 CF_ARREARS = True # should be left as True
 
 # Option parameters
-K    = 88.0 # strike price
-OPT  = 'put' # call or put option
-TYPE = 'american' # option type: european or american
-EXPO = 3 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
+K       = 88.0 # strike price
+OPT     = 'put' # call or put option
+TYPE    = 'american' # option type: european or american
+OP_NPER = 3 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
 
 
-class SWAPParameters():
+class SWAPParameters(lt.Parameters):
     '''Encapsulates parameters for swaps'''
-    # pylint: disable=too-few-public-methods
 
     def __init__(self):
-        self.fixed_rate = FIXED_RATE
         self.arrears    = SWAP_ARREARS
-        self.expiration = SWAP_EXP
+        super().__init__(SWAP_NPER, FIXED_RATE)
+
 
     def describe(self):
         ''' Prints summary parameters to stdout '''
-        print(f'Fixed rate: {self.fixed_rate}')
-        print(f'{self.expiration} periods')
+        print(f'Fixed rate: {self.rate}')
+        super().describe('Fixed')
 
 
 
-class TermStructureParameters:
+class TermStructureParameters(lt.Parameters):
     '''Encapsulates parameters for the underlying security'''
     # pylint: disable=too-few-public-methods
 
     def __init__(self):
-        self.init      = R_00
-        self.n_periods = N
-        self.r_ud      = R_UD
-        self.rnp       = RNP
+        self.init  = R_00
+        self.r_ud  = R_UD
+        self.rnp   = RNP
+        super().__init__(NPER)
 
     def describe(self):
         ''' Prints summary parameters to stdout '''
         print(f'Initial price: {self.init}')
-        print(f'{self.n_periods} periods')
-        print(f'RUp-down rate: {self.r_ud}')
+        print(f'Up-down rate: {self.r_ud}')
         print(f'Risk-neutral probability: {self.rnp}')
+        super().describe()
 
 
 
-class ShortRate(op.Lattice):
+class CFParameters(lt.Parameters):
+    '''Parameters for caplets/floorlets'''
+    def __init__(self):
+        #self.libor  = LIBOR
+        self.type    = DERIVATIVE
+        self.arrears = CF_ARREARS
+        super().__init__(CF_NPER, LIBOR)
+
+
+    def describe(self):
+        ''' Prints summary parameters to stdout '''
+        print(f'Derivative: {self.type}')
+        print(f'LIBOR rate: {self.rate}')
+        super().describe('LIBOR')
+
+
+
+class ShortRate(lt.Lattice):
     ''' Short rate lattice '''
     def __init__(self, sec_par):
-        super().__init__(sec_par.n_periods)
+        super().__init__(sec_par.nperiods)
         self._build(sec_par)
 
 
@@ -99,11 +115,11 @@ class ShortRate(op.Lattice):
 
 
 
-class ZCB(op.Lattice):
+class ZCB(lt.Lattice):
     ''' Zero-coupon bond lattice '''
     def __init__(self, sh_rate, ts_par):
-        self.bond_maturity = ZCB_MAT
-        super().__init__(self.bond_maturity)
+        self.nperiods = ZCB_NPER
+        super().__init__(self.nperiods)
         self._build(sh_rate, ts_par)
 
     def _build(self, sh_rate, ts_par): # build the lattice
@@ -112,23 +128,32 @@ class ZCB(op.Lattice):
                 if period == self.size:
                     self.lattice[state][period] = 100.
                 else:
-                    p_1 = self.lattice[state+1][period+1]
-                    p_2 = self.lattice[state][period+1]
-                    num = ts_par.rnp[0] * p_1 + ts_par.rnp[1] * p_2
+                    num = self.back_prop(state, period, ts_par.rnp)
                     denom = 1 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
+
+    def describe(self):
+        '''Self-descriptor'''
+        print('\n*** Zero-coupon bond price ***\n')
+        #self.swap_parameters.describe()
+        self.print_price(True)
 
 
 
 class ZCBOptions(op.Options):
     ''' Options for Zero coupon bonds / Subclass of Options '''
 
-    def build(self, underlying, ts_par, opt_par, sh_rate):
+    def __init__(self, ts_par, opt_par):
+        self.term_parameters   = ts_par
+        self.option_parameters = opt_par
+        super().__init__(opt_par.nperiods)
+
+    def build(self, underlying, sh_rate):
         ''' Over rides Options build method '''
-        self._set_option_flags(opt_par)
-        strike = opt_par.strike
+        self._set_option_flags(self.option_parameters)
+        strike = self.option_parameters.strike
         flag   = self.flags[0]
-        rnp    = ts_par.rnp
+        rnp    = self.term_parameters.rnp
         print(strike, flag, rnp, self.size)
 
         for period in range(self.size, -1, -1):
@@ -138,48 +163,29 @@ class ZCBOptions(op.Options):
                     self.lattice[state][period] = comp
                 else :
                     if self.flags[1] == 'E': # european options
-                        p_1 = self.lattice[state+1][period+1]
-                        p_2 = self.lattice[state][period+1]
-                        num = rnp[0] * p_1 + rnp[1] * p_2
+                        num = self.back_prop(state, period, rnp)
                         denom = 1. + sh_rate.lattice[state][period]
                         self.lattice[state][period] = num / denom
                     else: # american options
                         # Exercise value:
                         e_val = flag*(underlying.lattice[state][period]-strike)
-
-                        num   = rnp[0]*self.lattice[state+1][period+1]
-                        num  += rnp[1]*self.lattice[state][period+1]
+                        num = self.back_prop(state, period, rnp)
                         denom = 1.0 + sh_rate.lattice[state][period]
                         c_val = num / denom
 
                         self.lattice[state][period] = max(e_val, c_val)
 
-        def describe():
-            print('\n*** Option price from security ***\n')
-            ts_par.describe()
-            print()
-            opt_par.describe()
-            self.print_price()
-
-
-
-class CFParameters():
-    def __init__(self):
-        self.libor = LIBOR
-        self.matur = CF_EXP
-        self.type  = DERIVATIVE
-        self.arrears = CF_ARREARS
-
-
     def describe(self):
-        ''' Prints summary parameters to stdout '''
-        print(f'Derivative: {self.type}')
-        print(f'Maturity: {self.matur} periods')
-        print(f'LIBOR rate: {self.libor}')
+        '''Self-descriptor'''
+        print('\n*** Option price from security ***\n')
+        self.term_parameters.describe()
+        print()
+        self.option_parameters.describe()
+        self.print_price()
 
 
 
-class CapFloorLet(op.Lattice):
+class CapFloorLet(lt.Lattice):
     ''' caplets & floorlets / Subclass of Lattice '''
 
     def __init__(self, cf_parameters):
@@ -188,7 +194,7 @@ class CapFloorLet(op.Lattice):
         self.libor         = self.cf_parameters.libor
         self.type          = DERIVATIVE
         super().__init__(self.matur)
-        if self.cf_parameters.arrears == True:
+        if self.cf_parameters.arrears:
             self.size -= 1
         self._set_option_flags()
 
@@ -204,6 +210,7 @@ class CapFloorLet(op.Lattice):
 
 
     def build(self, ts_par, sh_rate):
+        ''' build the caplet/floorlet lattice'''
         flag = self.flag # caplet or floorlet
         rate = self.libor
         for period in range(self.size, -1, -1):
@@ -213,29 +220,30 @@ class CapFloorLet(op.Lattice):
                     denom = 1 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
                 else:
-                    num  = ts_par.rnp[0] * self.lattice[state + 1][period + 1]
-                    num += ts_par.rnp[1] * self.lattice[state][period + 1]
+                    num = self.back_prop(state, period, ts_par.rnp)
                     denom = 1.0 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
 
 
     def describe(self):
+        '''Self-descriptor'''
         print('\n*** Caplet/floorlet price ***\n')
         self.cf_parameters.describe()
         self.print_price(True)
 
 
-class SWAP(op.Lattice):
+class SWAP(lt.Lattice):
     '''Swap lattice '''
     def __init__(self, swap_par):
         self.swap_parameters = swap_par
-        super().__init__(swap_par.expiration)
-        if self.swap_parameters.arrears == True:
+        super().__init__(swap_par.nperiods)
+        if self.swap_parameters.arrears:
             self.size -= 1
 
 
     def build(self, ts_par, sh_rate): # build the lattice
-        rate = self.swap_parameters.fixed_rate
+        '''Build the swap lattice'''
+        rate = self.swap_parameters.rate
         for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
                 if period == self.size:
@@ -243,14 +251,14 @@ class SWAP(op.Lattice):
                     denom = 1.0 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
                 else:
-                    num  = sh_rate.lattice[state][period]-rate
-                    num += ts_par.rnp[0] * self.lattice[state + 1][period + 1]
-                    num += ts_par.rnp[1] * self.lattice[state][period + 1]
+                    num  = sh_rate.lattice[state][period] - rate
+                    num += self.back_prop(state, period, ts_par.rnp)
                     denom = 1.0 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
 
 
     def describe(self):
+        '''Self-descriptor'''
         print('\n*** Swap price ***\n')
         self.swap_parameters.describe()
         self.print_price(True)
@@ -272,13 +280,13 @@ if __name__ == '__main__':
         zcb = ZCB(short_rates, term_params)
         zcb.print_lattice('ZCB')
 
-        option_params = op.OptionParameters(OPT, TYPE, K, EXPO)
-        opt = ZCBOptions(option_params)
-        opt.build(zcb, term_params, option_params, short_rates)
+        option_params = op.OptionParameters(OPT, TYPE, K, OP_NPER)
+        opt = ZCBOptions(term_params, option_params)
+        opt.build(zcb, short_rates)
         if LATTICE_FLAG:
             opt.print_lattice('Zero option value')
         zcb.describe()
-    elif DERIVATIVE == 'caplet' or DERIVATIVE == 'floorlet':
+    elif DERIVATIVE in ('caplet','floorlet'):
         cf_params = CFParameters()
         cf_let = CapFloorLet(cf_params)
         cf_let.build(term_params, short_rates)
@@ -295,5 +303,3 @@ if __name__ == '__main__':
 
     else:
         raise Exception(f'DERIVATIVE should be "zcb", "caplet" or "floorlet". Its value is: "{DERIVATIVE}"')
-
-

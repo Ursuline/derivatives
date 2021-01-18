@@ -14,7 +14,7 @@ https://www.coursera.org/learn/financial-engineering-1/home/welcome
 @author: charles mégnin
 """
 import math
-import pandas as pd
+import lattice as lt
 
 #### PARAMETERS ####
 PRINT_LATTICES = True # print lattices to stdout
@@ -22,9 +22,9 @@ FUTURES_FLAG   = False # Compute options from futures
 
 # Lattice parameters:
 S0   = 100.0 # initial price
-T    = 0.25 # maturity (years)
+TYRS = 0.25 # maturity (years)
 SIG  = 0.3 # volat
-N    = 15 # number of periods
+NPER = 15 # number of periods
 R    = 0.02 # risk-free rate
 D    = 0.01 # dividend yield
 
@@ -38,40 +38,35 @@ EXPO = 15 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
 #EXPF = 10 # expiration
 #### END PARAMETERS ####
 
-class OptionParameters:
+
+class OptionParameters(lt.Parameters):
     '''Encapsulates parameters for the option'''
 
     def __init__(self, opt, option_type, strike, expiration):
         self.opt    = opt
         self.type   = option_type
         self.strike = strike
-        self.expir  = expiration
-
-
-    def print_parameters(self):
-        ''' Print dictionary of all parameters in class '''
-        print(f'\nclass parameters:{self.__dict__}')
+        super().__init__(expiration)
 
 
     def describe(self):
         '''Prints summary options parameters to std out'''
         print(f'{str.capitalize(self.type)} {self.opt} option')
         print(f'Strike price={self.strike}')
-        print(f'Expiration: {self.expir} periods\n')
+        super.describe()
 
 
 
-class SecurityParameters:
+class SecurityParameters(lt.Parameters):
     '''Encapsulates parameters for the underlying security'''
     # pylint: disable=too-many-instance-attributes
 
     def __init__(self):
         self.init      = S0
-        self.matur     = T
+        self.matur     = TYRS
         self.volat     = SIG
-        self.n_periods = N
-        self.rate      = R
         self.dividend  = D
+        super().__init__(NPER, R)
 
         self._set_up_down_rates()
         self._set_risk_neutral_proba()
@@ -82,7 +77,7 @@ class SecurityParameters:
             u=r_ud[0] d=r_ud[1]
             Convert Black-Scholes / calibrate a binomial model '''
         self.r_ud = [0., 0.]
-        exponent  = self.volat * math.sqrt(self.matur / self.n_periods)
+        exponent  = self.volat * math.sqrt(self.matur / self.nperiods)
         self.r_ud[0] = math.exp(exponent)
         self.r_ud[1] = 1.0 / self.r_ud[0]
 
@@ -91,7 +86,7 @@ class SecurityParameters:
         ''' Computes risk-neutral probability rnp[0]=q rnp[1]=1-q
             from parameters u & d in r_ud '''
         self.rnp = [0., 0.]
-        exponent = (self.rate - self.dividend) * self.matur / self.n_periods
+        exponent = (self.rate - self.dividend) * self.matur / self.nperiods
         num      = math.exp(exponent)
         num      = num - self.r_ud[1]
         denom    = self.r_ud[0] - self.r_ud[1]
@@ -99,18 +94,13 @@ class SecurityParameters:
         self.rnp[1] = 1.0 - self.rnp[0]
 
 
-    def print_parameters(self):
-        ''' Print all parameters in class '''
-        print(f'\nclass parameters:{self.__dict__}')
-
-
     def describe(self):
         ''' Prints summary parameters to stdout '''
         print(f'Initial price: {self.init}')
-        print(f'Maturity: {self.matur} years / {self.n_periods} periods')
         print(f'Risk-free rate: {100*self.rate:.2f}%')
         print(f'Dividend yield: {100*self.dividend:.2f}%')
         print(f'Volatility: {100*self.volat:.2f}%')
+        super().describe()
 
 
     def print_up_down_rates(self):
@@ -124,53 +114,7 @@ class SecurityParameters:
 
 
 
-class Lattice:
-    ''' Lattice superclass encapsulates parameters and functionality
-        common to Shares, Options and Futures classes'''
-
-    def __init__(self, size):
-        # build a size x size list populated with 0
-        self.lattice = [['' for x in range(size+1)] for y in range(size+1)]
-        self.size = size
-
-
-    def back_prop(self, row, column, rnp):
-        ''' returns q*S^(i+1)_(t+1) + (1-q)*S^i_(t+1)
-            q = proba / S = lattice'''
-        p_1 = self.lattice[row + 1][column + 1] # S^(i+1)_(t+1)
-        p_2 = self.lattice[row][column + 1]     # S^i_(t+1)
-
-        return p_1 * rnp[0] + p_2 * rnp[1]
-
-
-    def print_lattice(self, title, percent_flag=False):
-        '''Prints lattice to stdout'''
-        print(f'\n{title} lattice:')
-        dfr = pd.DataFrame(self.lattice)
-        # Format output
-        if percent_flag:
-            pd.options.display.float_format = '{:.2%}'.format
-            print(dfr.loc[::-1])
-        else:
-            pd.options.display.float_format = '{:.2f}'.format
-            print(dfr.loc[::-1])
-
-
-    def print_price(self, percent_flag=False):
-        '''Prints derivative price to stdout'''
-        if percent_flag:
-            print(f'C0={self.lattice[0][0]:.2%}')
-        else:
-            print(f'C0={self.lattice[0][0]:.2f}')
-
-
-    def print_parameters(self):
-        ''' Print all parameters in class '''
-        print(f'\nclass parameters:{self.__dict__}')
-
-
-
-class Options(Lattice):
+class Options(lt.Lattice):
     ''' Options lattice / subclass of Lattice
         underlying is lattice of either security or futures '''
 
@@ -219,7 +163,7 @@ class Options(Lattice):
 
 
 
-class Futures(Lattice):
+class Futures(lt.Lattice):
     ''' Shares lattice / subclass of Lattice'''
 
     def __init__(self, sec_par):
@@ -239,7 +183,7 @@ class Futures(Lattice):
 
 
 
-class Shares(Lattice):
+class Shares(lt.Lattice):
     ''' Shares lattice / subclass of Lattice'''
 
     def __init__(self, sec_par):
