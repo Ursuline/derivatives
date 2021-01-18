@@ -17,7 +17,6 @@ https://www.coursera.org/learn/financial-engineering-1/home/welcome
 import options as op
 
 #### PARAMETERS ####
-LATTICE_FLAG = True # print lattice to stdout
 
 # Lattice parameters:
 R_00 = .06 # initial price
@@ -29,9 +28,8 @@ N    = 5
 ZCB_MAT = 4
 
 # CAPLETS/FLOORLETS PARAMETERS
-LIBOR   = .02
+LIBOR   = .1
 CF_EXP  = 6
-CF_TYPE = 'caplet' # either of caplet or floorlet
 ARREARS = True # should probably be left as True
 
 # Option parameters
@@ -167,7 +165,7 @@ class CapFloorLet(op.Lattice):
         self.cf_parameters = cf_parameters
         self.matur         = self.cf_parameters.matur
         self.libor         = self.cf_parameters.libor
-        self.type          = self.cf_parameters.type
+        self.type          = DERIVATIVE
         super().__init__(self.matur)
         if self.cf_parameters.arrears == True:
             self.size -= 1
@@ -178,17 +176,18 @@ class CapFloorLet(op.Lattice):
         '''Sets option flags for call/put & european/american'''
         if str.lower(self.type) == 'caplet':
             self.flag = 1.0
-        elif str.lower(self.type) != 'floorlet':
+        elif str.lower(self.type) == 'floorlet':
             self.flag = -1.0
         else:
             raise Exception(f'DERIVATIVE should be "caplet" or "floorlet". Its value is: "{self.type}"')
 
 
     def build(self, ts_par, sh_rate):
+        flag = self.flag # caplet or floorlet
         for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
                 if period == self.size:
-                    num = sh_rate.lattice[state][period] - self.libor
+                    num = flag*(sh_rate.lattice[state][period] - self.libor)
                     denom = 1 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
                 else:
@@ -206,9 +205,12 @@ class CapFloorLet(op.Lattice):
 
 
 if __name__ == '__main__':
-    # Load underlying security-related parameters
-    DERIVATIVE = 'caplet' # either of zcb, caplet or floorlet
+    DERIVATIVE   = 'floorlet' # either of zcb, caplet or floorlet
+    LATTICE_FLAG = True # print lattice to stdout
 
+    DERIVATIVE = str.lower(DERIVATIVE)
+
+    # Load underlying security-related parameters
     term_params = TermStructureParameters()
     short_rates = ShortRate(term_params)
     short_rates.print_lattice('Short-rate', True)
@@ -220,13 +222,15 @@ if __name__ == '__main__':
         option_params = op.OptionParameters(OPT, TYPE, K, EXPO)
         opt = ZCBOptions(option_params)
         opt.build(zcb, term_params, option_params, short_rates)
-        opt.print_lattice('Zero option value')
+        if LATTICE_FLAG:
+            opt.print_lattice('Zero option value')
         zcb.describe()
     elif DERIVATIVE == 'caplet' or DERIVATIVE == 'floorlet':
         cf_params = CFParameters()
         cf_let = CapFloorLet(cf_params)
         cf_let.build(term_params, short_rates)
-        cf_let.print_lattice('Caplet', True)
+        if LATTICE_FLAG:
+            cf_let.print_lattice(str.capitalize(DERIVATIVE), True)
         cf_let.describe()
     else:
         raise Exception(f'DERIVATIVE should be "zcb", "caplet" or "floorlet". Its value is: "{DERIVATIVE}"')
