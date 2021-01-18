@@ -6,6 +6,11 @@ Created on Tue Jan 12 13:44:57 2021
 Computes the price of european and american call & put options
 for shares or futures
 
+This follows the nomenclature of
+Financial Engineering and Risk Management Part I chapter 4
+on Coursera
+https://www.coursera.org/learn/financial-engineering-1/home/welcome
+
 @author: charles mégnin
 """
 import math
@@ -151,9 +156,12 @@ class Lattice:
             print(dfr.loc[::-1])
 
 
-    def print_price(self):
+    def print_price(self, percent_flag=False):
         '''Prints derivative price to stdout'''
-        print(f'C0={self.lattice[0][0]:.2f}')
+        if percent_flag:
+            print(f'C0={self.lattice[0][0]:.2%}')
+        else:
+            print(f'C0={self.lattice[0][0]:.2f}')
 
 
     def print_parameters(self):
