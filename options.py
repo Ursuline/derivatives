@@ -18,54 +18,35 @@ import lattice as lt
 
 #### PARAMETERS ####
 PRINT_LATTICES = True # print lattices to stdout
-FUTURES_FLAG   = False # Compute options from futures
 
 # Lattice parameters:
-S0   = 100.0 # initial price
-TYRS = 0.25 # maturity (years)
-SIG  = 0.3 # volat
-NPER = 15 # number of periods
-R    = 0.02 # risk-free rate
-D    = 0.01 # dividend yield
+S0    = 100.0 # initial price
+T_YRS = 0.25 # maturity (years)
+SIGMA = 0.3 # volat
+NPER  = 15 # number of periods
+R     = 0.02 # risk-free rate
+DIV   = 0.01 # dividend yield
 
 # Option parameters
-K    = 110.0 # strike price
-OPT  = 'put' # call or put option
-TYPE = 'American' # option type: european or american
-EXPO = 15 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
+K       = 110.0 # strike price
+OPT     = 'put' # call or put option
+TYPE    = 'european' # option type: european or american
+OP_NPER = 15 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
 
 # Futures parameters
 #EXPF = 10 # expiration
 #### END PARAMETERS ####
 
 
-class OptionParameters(lt.Parameters):
-    '''Encapsulates parameters for the option'''
-
-    def __init__(self, opt, option_type, strike, expiration):
-        self.opt    = opt
-        self.type   = option_type
-        self.strike = strike
-        super().__init__(expiration)
-
-
-    def describe(self):
-        '''Prints summary options parameters to std out'''
-        print(f'{str.capitalize(self.type)} {self.opt} option')
-        print(f'Strike price={self.strike}')
-        super.describe()
-
-
-
+#### UNDERLYING SECURITY ####
 class SecurityParameters(lt.Parameters):
     '''Encapsulates parameters for the underlying security'''
     # pylint: disable=too-many-instance-attributes
-
     def __init__(self):
         self.init      = S0
-        self.matur     = TYRS
-        self.volat     = SIG
-        self.dividend  = D
+        self.matur     = T_YRS
+        self.volat     = SIGMA
+        self.dividend  = DIV
         super().__init__(NPER, R)
 
         self._set_up_down_rates()
@@ -96,51 +77,77 @@ class SecurityParameters(lt.Parameters):
 
     def describe(self):
         ''' Prints summary parameters to stdout '''
+        print('*** Security parameters ***')
         print(f'Initial price: {self.init}')
         print(f'Risk-free rate: {100*self.rate:.2f}%')
         print(f'Dividend yield: {100*self.dividend:.2f}%')
         print(f'Volatility: {100*self.volat:.2f}%')
+        print(f'u = {self.r_ud[0]:.5f} / d = {self.r_ud[1]:.5f}')
+        print(f'q = {self.rnp[0]:.5f} / 1-q = {self.rnp[1]:.5f}')
         super().describe()
 
 
-    def print_up_down_rates(self):
-        ''' Prints u & d to stdout '''
-        print(f'u = {self.r_ud[0]:.5f} / d = {self.r_ud[1]:.5f}')
+
+class Shares(lt.Lattice):
+    ''' Shares lattice / subclass of Lattice'''
+    def __init__(self, sec_par):
+        self.sec_parameters = sec_par
+        super().__init__(self.sec_parameters.nperiods)
 
 
-    def print_risk_neutral_probability(self):
-        ''' Prints risk-free probability q to stdout '''
-        print(f'q = {self.rnp[0]:.5f} / 1-q = {self.rnp[1]:.5f}')
+    def build(self):
+        ''' Build the lattice '''
+        self.lattice[0][0] = self.sec_parameters.init
+        for period in range(1, self.size+1):
+            for state in range(0, period+1):
+                if state == 0:
+                    s_prev = self.lattice[state][period-1]
+                    self.lattice[state][period] = self.sec_parameters.r_ud[1] * s_prev
+                else:
+                    s_prev = self.lattice[state-1][period-1]
+                    self.lattice[state][period] = self.sec_parameters.r_ud[0] * s_prev
+
+
+#### OPTION ####
+class OptionParameters(lt.Parameters):
+    '''Encapsulates parameters for the option'''
+    def __init__(self, opt, option_type, strike, nperiods):
+        self.opt    = opt
+        self.type   = option_type
+        self.strike = strike
+        super().__init__(nperiods)
+
+
+    def describe(self):
+        '''Prints summary options parameters to std out'''
+        print(f'{str.capitalize(self.type)} {self.opt} option')
+        print(f'Strike price={self.strike}')
 
 
 
 class Options(lt.Lattice):
     ''' Options lattice / subclass of Lattice
         underlying is lattice of either security or futures '''
-
     def __init__(self, opt_par):
-        self.flags  = [1.0, 'E']
-        super().__init__(opt_par.expir)
+        self.option_parameters = opt_par
+        self.flags             = [1.0, 'E']
+        super().__init__(opt_par.nperiods)
 
 
-    def build(self, underlying, sec_par, opt_par):
+    def build(self, underlying, sec_par):
         ''' build the lattice '''
-        self._set_option_flags(opt_par)
-        strike = opt_par.strike
-        flag   = self.flags[0]
-        rnp    = sec_par.rnp
+        self._set_option_flags(self.option_parameters)
 
         for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
+                comp = underlying.lattice[state][period] - self.option_parameters.strike
                 if period == self.size:
-                    comp = underlying.lattice[state][period]-strike
-                    self.lattice[state][period] = max(flag*comp, 0.)
+                    self.lattice[state][period] = max(self.flags[0]*comp, 0.)
                 else:
-                    num   = self.back_prop(state, period, rnp)
-                    denom = math.exp(sec_par.rate*sec_par.matur/self.size)
-                    ratio = num/denom
-                    # exercise value
-                    ex_val = strike - underlying.lattice[state][period]
+                    num    = self._back_prop(state, period, sec_par.rnp)
+                    denom  = math.exp(sec_par.rate * sec_par.matur/self.size)
+                    ratio  = num/denom
+                    ex_val = -comp # exercise value
 
                     if self.flags[1] == 'E':
                         self.lattice[state][period] = ratio
@@ -159,100 +166,61 @@ class Options(lt.Lattice):
         if str.lower(opt_par.type) == 'american':
             self.flags[1] = 'A'
         elif str.lower(opt_par.type) != 'european':
-            raise Exception(f'TYPE should be "european" or "american". Its value is: "{opt_par.type}"')
+            raise Exception(f'TYPE should be "european" or "american". Value is: "{opt_par.type}"')
 
 
-
+#### FUTURES ####
 class Futures(lt.Lattice):
     ''' Shares lattice / subclass of Lattice'''
-
     def __init__(self, sec_par):
         self.sec_par = sec_par
-        super().__init__(sec_par.n_periods)
+        super().__init__(sec_par.nperiods)
 
 
     def build(self, underlying):
         ''' build the lattice '''
+        rnp = self.sec_par.rnp
         for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
                 if period == self.size: # F_T = S_T at maturity
                     self.lattice[state][period] = underlying.lattice[state][period]
                 else:
-                    rnp = self.sec_par.rnp
-                    self.lattice[state][period] = self.back_prop(state, period, rnp)
+                    self.lattice[state][period] = self._back_prop(state, period, rnp)
 
-
-
-class Shares(lt.Lattice):
-    ''' Shares lattice / subclass of Lattice'''
-
-    def __init__(self, sec_par):
-        self.sec_par = sec_par
-        super().__init__(self.sec_par.n_periods)
-
-
-    def build(self):
-        ''' Build the lattice '''
-        self.lattice[0][0] = self.sec_par.init
-        for period in range(1, self.size+1):
-            for state in range(0, period+1):
-                if state == 0:
-                    s_prev = self.lattice[state][period-1]
-                    self.lattice[state][period] = self.sec_par.r_ud[1] * s_prev
-                else:
-                    s_prev = self.lattice[state-1][period-1]
-                    self.lattice[state][period] = self.sec_par.r_ud[0] * s_prev
-
-
-
-def print_results(sec_p, opt_p, opt):
-    '''Prints final results to screen'''
-    if FUTURES_FLAG:
-        print('\n*** Option price from futures ***\n')
-    else:
-        print('\n*** Option price from security ***\n')
-    sec_p.describe()
-    print()
-    opt_p.describe()
-    opt.print_price()
-
-
-def print_lattices():
-    '''print all lattices'''
-    shares.print_lattice('Shares')
-    if FUTURES_FLAG:
-        futures.print_lattice('Futures')
-    options.print_lattice('Options')
 
 
 if __name__ == '__main__':
-    # Load underlying security-related parameters
-    sec_params = SecurityParameters()
+    FUTURES_FLAG   = False # Optionally compute options from futures
 
-    # Display security-derived parameters (check)
-    sec_params.print_up_down_rates()
-    sec_params.print_risk_neutral_probability()
+    # Load underlying security-related parameters
+    security_params = SecurityParameters()
 
     # Build lattice for underlying security
-    shares = Shares(sec_params)
+    shares = Shares(security_params)
     shares.build()
 
     # Optionally build lattice for futures
     if FUTURES_FLAG:
-        futures = Futures(sec_params)
+        futures = Futures(security_params)
         futures.build(shares)
 
     # Build lattice for options
-    opt_params = OptionParameters(OPT, TYPE, K, EXPO)
-    options    = Options(opt_params)
+    option_params = OptionParameters(OPT, TYPE, K, OP_NPER)
+    options    = Options(option_params)
     if FUTURES_FLAG: # build options lattice from futures
-        options.build(futures, sec_params, opt_params)
+        options.build(futures, security_params)
     else: # build options lattice from underlying security
-        options.build(shares, sec_params, opt_params)
+        options.build(shares, security_params)
 
-
-    if PRINT_LATTICES: # print lattices to sceen if flag set
-        print_lattices()
+    if PRINT_LATTICES: # print lattices to screen if flag set
+        shares.display_lattice('Shares')
+        if FUTURES_FLAG:
+            futures.display_lattice('Futures')
+        options.display_lattice('Options')
 
     # Print final result to screen
-    print_results(sec_params, opt_params, options)
+    security_params.describe()
+    if FUTURES_FLAG:
+        options.describe('Option (from futures)', option_params, False)
+    else:
+        options.describe('Option (from security)', option_params, False)
