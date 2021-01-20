@@ -13,27 +13,16 @@ https://www.coursera.org/learn/financial-engineering-1/home/welcome
 
 @author: charles mégnin
 """
-import pandas as pd
 import lattice as lt
-import options as op
 
 #### PARAMETERS ####
 # Lattice parameters:
 # TERM STRUCTURE
-TS_R00  = .06 # initial price
-TS_RUD  = [1.25, .9]
+TS_R00  = .05 # initial price
+TS_RUD  = [1.1, .9]
 TS_RNP  = [.5, .5] # risk-neutral probabilities
-TS_NPER = 5
+TS_NPER = 10
 
-# ZCB PARAMETERS
-ZCB_FACE = 100 # Bond face value normally 100
-ZCB_NPER = 4
-
-# Option parameters
-OP_K    = 84.0 # strike price
-OPT     = 'call' # call or put option
-OP_TYPE = 'european' # option type: european or american
-OP_NPER = 2 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
 
 #SWAP PARAMETERS
 FIXED_RATE   = .05
@@ -47,7 +36,7 @@ SWAPTION_NPER = 3
 LIBOR      = .02
 CF_NPER    = 6
 
-# ELEMENTARRY PRICE PARAMETERS
+# ELEMENTARY PRICE PARAMETERS
 ELEM_NPER       = 6
 ELEM_BASE_PRICE = 100
 
@@ -102,81 +91,6 @@ class ShortRate(lt.Lattice):
         super().describe('Interest rate term structure', self.parameters, True)
 
 
-### ZERO-COUPON BONDS & ZCB OPTIONS ###
-class ZCBParameters(lt.Parameters):
-    '''Parameters for caplets/floorlets'''
-    def __init__(self, zcb_face, zcb_nper):
-        self.face = zcb_face
-        super().__init__(zcb_nper)
-
-
-    def describe(self):
-        ''' Prints summary parameters to stdout '''
-        print(f'Face value: {self.face}')
-        super().describe()
-
-
-
-class ZCB(lt.Lattice):
-    ''' Zero-coupon bond lattice '''
-
-    def __init__(self, zcb_parameters):
-        self.parameters = zcb_parameters
-        super().__init__(self.parameters.nperiods)
-
-
-    def build(self, sh_rate, term_par):
-        ''' build the zero-coupon bond lattice'''
-        for period in range(self.size, -1, -1):
-            for state in range(period, -1, -1):
-                if period == self.size:
-                    self.lattice[state][period] = self.parameters.face
-                else:
-                    num = self._back_prop(state, period, term_par.rnp)
-                    denom = 1 + sh_rate.lattice[state][period]
-                    self.lattice[state][period] = num / denom
-
-
-    def describe(self):
-        '''Self-descriptor'''
-        super().describe('Zero-coupon bond', self.parameters, False)
-
-
-
-class ZCBOptions(op.Options):
-    ''' Options for Zero coupon bonds / Subclass of Options '''
-
-    def __init__(self, opt_params):
-        self.rnp        = term_params.rnp
-        self.parameters = opt_params
-        super().__init__(self.parameters)
-
-
-    def build(self, underlying, sh_rate):
-        ''' Over rides Options build method '''
-        self._set_option_flags(self.parameters)
-        strike = self.parameters.strike
-
-        for period in range(self.size, -1, -1):
-            for state in range(period, -1, -1):
-                e_val = self.flags[0]*(underlying.lattice[state][period]-strike)
-                if period == self.size:
-                    self.lattice[state][period] = max(0., e_val)
-                else :
-                    num   = self._back_prop(state, period, self.rnp)
-                    denom = 1.0 + sh_rate.lattice[state][period]
-                    c_val = num / denom
-                    if self.flags[1] == 'E': # european options
-                        self.lattice[state][period] = c_val
-                    else: # american options
-                        self.lattice[state][period] = max(e_val, c_val)
-
-
-    def describe(self):
-        '''Self-descriptor'''
-        super().describe('Zero-coupon bond options', self.parameters, False)
-
-
 
 #### CAPLETS & FLOORLETS ####
 class CFParameters(lt.Parameters):
@@ -192,8 +106,9 @@ class CFParameters(lt.Parameters):
         super().describe(True, 'LIBOR')
 
 
+
 class CapFloorLet(lt.Lattice):
-    ''' caplets & floorlets / Subclass of Lattice '''
+    ''' Caplets & Floorlets '''
 
     def __init__(self, cf_parameters):
         self.parameters = cf_parameters
@@ -392,14 +307,14 @@ class ElementaryPrices(lt.Lattice):
 
     def describe(self):
         '''Self-descriptor'''
-        super().describe('Elementary prices', None, False)
+        super().describe('Elementary', None, False)
 
 
 #### Driver ####
 if __name__ == '__main__':
     ## Derivative selection ##
-    # Set either of zcb, zcbopt, caplet, floorlet, swap, swaption, elementary
-    DERIVATIVE   = 'elementary'
+    # Set either of caplet, floorlet, swap, swaption, elementary
+    DERIVATIVE   = 'zcb'
     LATTICE_FLAG = True # print lattice to stdout
     DERIVATIVE   = str.lower(DERIVATIVE)
 
@@ -408,28 +323,9 @@ if __name__ == '__main__':
     short_rates = ShortRate(term_params)
     short_rates.display_lattice('Short-rate', True)
 
-    # Zero-coupon bonds and ZCB options
-    if DERIVATIVE in ('zcb', 'zcbopt'):
-        zcb = ZCB(ZCBParameters(ZCB_FACE, ZCB_NPER))
-        zcb.build(short_rates, term_params) # compute lattice
-        if LATTICE_FLAG:
-            zcb.display_lattice('ZCB')
-
-        if DERIVATIVE == 'zcb':
-            short_rates.describe()
-        zcb.describe()
-
-        if DERIVATIVE == 'zcbopt': # ZCB options
-            option_params = op.OptionParameters(OPT, OP_TYPE, OP_K, OP_NPER)
-            zcb_opt       = ZCBOptions(option_params)
-            zcb_opt.build(zcb, short_rates)  # compute lattice
-            if LATTICE_FLAG:
-                zcb_opt.display_lattice('Zero option value')
-            short_rates.describe()
-            zcb_opt.describe()
 
     # Caplets & floorlets
-    elif DERIVATIVE in ('caplet', 'floorlet'):
+    if DERIVATIVE in ('caplet', 'floorlet'):
         cflet     = CapFloorLet(CFParameters(DERIVATIVE, CF_NPER, LIBOR))
         cflet.build(term_params, short_rates)  # compute lattice
 
