@@ -13,6 +13,7 @@ https://www.coursera.org/learn/financial-engineering-1/home/welcome
 
 @author: charles mégnin
 """
+import pandas as pd
 import lattice as lt
 import options as op
 
@@ -46,6 +47,10 @@ SWAPTION_NPER = 3
 LIBOR      = .02
 CF_NPER    = 6
 
+# ELEMENTARRY PRICE PARAMETERS
+ELEM_NPER       = 6
+ELEM_BASE_PRICE = 100
+
 ### Derivative selection to be set in main driver ###
 
 ### SHORT RATE LATTICE ###
@@ -75,27 +80,26 @@ class ShortRate(lt.Lattice):
     ''' Short rate lattice: base lattice for all fixed-income derivatives '''
 
     def __init__(self, term_structure_parameters):
-        self.term_structure_parameters = term_structure_parameters
-        super().__init__(term_structure_parameters.nperiods)
+        self.parameters = term_structure_parameters
+        super().__init__(self.parameters.nperiods)
         self._build() # auto-build
 
 
     def _build(self): # build the lattice
-        parameters = self.term_structure_parameters
-        self.lattice[0][0] = parameters.init
+        self.lattice[0][0] = self.parameters.init
         for period in range(1, self.size+1):
-            for share in range(0, period+1):
-                if share == 0:
-                    s_prev = self.lattice[share][period-1]
-                    self.lattice[share][period] = parameters.r_ud[1] * s_prev
+            for state in range(0, period+1):
+                if state == 0:
+                    s_prev = self.lattice[state][period-1]
+                    self.lattice[state][period] = self.parameters.r_ud[1] * s_prev
                 else:
-                    s_prev = self.lattice[share-1][period-1]
-                    self.lattice[share][period] = parameters.r_ud[0] * s_prev
+                    s_prev = self.lattice[state-1][period-1]
+                    self.lattice[state][period] = self.parameters.r_ud[0] * s_prev
 
 
     def describe(self):
         '''Self-descriptor'''
-        super().describe('Interest rate term structure', self.term_structure_parameters, True)
+        super().describe('Interest rate term structure', self.parameters, True)
 
 
 ### ZERO-COUPON BONDS & ZCB OPTIONS ###
@@ -117,8 +121,8 @@ class ZCB(lt.Lattice):
     ''' Zero-coupon bond lattice '''
 
     def __init__(self, zcb_parameters):
-        self.zcb_parameters = zcb_parameters
-        super().__init__(self.zcb_parameters.nperiods)
+        self.parameters = zcb_parameters
+        super().__init__(self.parameters.nperiods)
 
 
     def build(self, sh_rate, term_par):
@@ -126,7 +130,7 @@ class ZCB(lt.Lattice):
         for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
                 if period == self.size:
-                    self.lattice[state][period] = self.zcb_parameters.face
+                    self.lattice[state][period] = self.parameters.face
                 else:
                     num = self._back_prop(state, period, term_par.rnp)
                     denom = 1 + sh_rate.lattice[state][period]
@@ -135,7 +139,7 @@ class ZCB(lt.Lattice):
 
     def describe(self):
         '''Self-descriptor'''
-        super().describe('Zero-coupon bond', self.zcb_parameters, False)
+        super().describe('Zero-coupon bond', self.parameters, False)
 
 
 
@@ -143,15 +147,15 @@ class ZCBOptions(op.Options):
     ''' Options for Zero coupon bonds / Subclass of Options '''
 
     def __init__(self, opt_params):
-        self.rnp               = term_params.rnp
-        self.option_parameters = opt_params
-        super().__init__(opt_params)
+        self.rnp        = term_params.rnp
+        self.parameters = opt_params
+        super().__init__(self.parameters)
 
 
     def build(self, underlying, sh_rate):
         ''' Over rides Options build method '''
-        self._set_option_flags(self.option_parameters)
-        strike = self.option_parameters.strike
+        self._set_option_flags(self.parameters)
+        strike = self.parameters.strike
 
         for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
@@ -170,7 +174,7 @@ class ZCBOptions(op.Options):
 
     def describe(self):
         '''Self-descriptor'''
-        super().describe('Zero-coupon bond options', self.option_parameters, False)
+        super().describe('Zero-coupon bond options', self.parameters, False)
 
 
 
@@ -192,10 +196,10 @@ class CapFloorLet(lt.Lattice):
     ''' caplets & floorlets / Subclass of Lattice '''
 
     def __init__(self, cf_parameters):
-        self.cf_parameters = cf_parameters
-        self.nperiods      = self.cf_parameters.nperiods
-        self.rate          = self.cf_parameters.rate
-        self.type          = DERIVATIVE
+        self.parameters = cf_parameters
+        self.nperiods   = self.parameters.nperiods
+        self.rate       = self.parameters.rate
+        self.type       = DERIVATIVE
         super().__init__(self.nperiods)
         self._set_option_flags()
         self.size -= 1 # arrears
@@ -229,7 +233,7 @@ class CapFloorLet(lt.Lattice):
 
     def describe(self):
         '''Self-descriptor'''
-        super().describe('Caplet/floorlet', self.cf_parameters, True)
+        super().describe('Caplet/floorlet', self.parameters, True)
 
 
 
@@ -250,22 +254,21 @@ class SwapParameters(lt.Parameters):
 class Swap(lt.Lattice):
     '''Swap lattice '''
     def __init__(self, swap_par):
-        self.swap_parameters = swap_par
-        super().__init__(swap_par.nperiods)
+        self.parameters = swap_par
+        super().__init__(self.parameters.nperiods)
         self.size -= 1 # arrears
 
 
     def build(self, ts_par, sh_rate):
         '''Build the swap lattice'''
-        rate = self.swap_parameters.rate
         for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
                 if period == self.size:
-                    num  = sh_rate.lattice[state][period] - rate
+                    num  = sh_rate.lattice[state][period] - self.parameters.rate
                     denom = 1.0 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
                 else:
-                    num  = sh_rate.lattice[state][period] - rate # coupon
+                    num  = sh_rate.lattice[state][period] - self.parameters.rate # coupon
                     num += self._back_prop(state, period, ts_par.rnp)
                     denom = 1.0 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
@@ -273,7 +276,7 @@ class Swap(lt.Lattice):
 
     def describe(self):
         '''Self-descriptor'''
-        super().describe('Swap', self.swap_parameters, True)
+        super().describe('Swap', self.parameters, True)
 
 
 #### SWAPTIONS ####
@@ -297,32 +300,106 @@ class Swaption(lt.Lattice):
     '''Swaption lattice '''
 
     def __init__(self, swaption_pars):
-        self.swaption_parameters = swaption_pars
-        super().__init__(swaption_pars.nperiods)
+        self.parameters = swaption_pars
+        super().__init__(self.parameters.nperiods)
 
 
-    def build(self, ts_pars, sh_rate, swap_lat):
+    def build(self, ts_pars, sh_rate, swapl):
         '''Build the swaption lattice'''
         for period in range(self.size, -1, -1):
             for state in range(period, -1, -1):
                 if period == self.size:
-                    self.lattice[state][period] = max(0, swap_lat.lattice[state][period])
+                    self.lattice[state][period] = max(0, swapl.lattice[state][period])
                 else: # discount rate
                     num   = self._back_prop(state, period, ts_pars.rnp)
                     denom = 1.0 + sh_rate.lattice[state][period]
                     self.lattice[state][period] = num / denom
 
+
     def describe(self):
         '''Self-descriptor'''
-        super().describe('Swaption', self.swaption_parameters, True)
+        super().describe('Swaption', self.parameters, True)
 
+
+### ELEMENTARY PRICES ###
+class ElementaryPriceParameters(lt.Parameters):
+    '''Encapsulates parameters for elementary prices'''
+
+    def __init__(self, elem_nper, elem_base_price):
+        self.base = elem_base_price
+        super().__init__(elem_nper)
+
+
+    def describe(self, percent=False, rate=None):
+        ''' Prints summary parameters to stdout '''
+        print('Elementary price parameters:')
+        print(f'base price={self.base}')
+        super().describe()
+
+
+
+class ElementaryPrices(lt.Lattice):
+    '''Elementary price lattice '''
+
+    def __init__(self, elem_params):
+        self.parameters = elem_params
+        self.built      = False
+        super().__init__(elem_params.nperiods)
+        self.price = [0. for x in range(self.size+1)]
+        self.rates = [0. for x in range(self.size+1)]
+
+
+    def build(self, ts_pars, sh_rate):
+        '''Build the elementary price lattice'''
+        self.lattice[0][0] = 1.0
+        for period in range(1, self.size+1):
+            for state in range(0, period+1):
+                print(state, period)
+                if state == 0:
+                    num    = ts_pars.rnp[0] * self.lattice[state][period-1]
+                    denom = 1. + sh_rate.lattice[state][period-1]
+                    self.lattice[state][period] = num / denom
+                elif state == period:
+                    num   = ts_pars.rnp[0] * self.lattice[state-1][period-1]
+                    denom = 1. + sh_rate.lattice[state-1][period-1]
+                    self.lattice[state][period] = num / denom
+                else:
+                    num1   = ts_pars.rnp[0] * self.lattice[state-1][period-1]
+                    denom1 = 1.0 + sh_rate.lattice[state-1][period-1]
+                    num2   = ts_pars.rnp[1] * self.lattice[state][period-1]
+                    denom2 = 1. + sh_rate.lattice[state][period-1]
+                    self.lattice[state][period] = num1/denom1 + num2/denom2
+        self.built = True
+
+
+    def discount(self):
+        '''Compute ZCB prices'''
+        print('\n  | coupon| spot|')
+        print('P | price | rate|')
+        print('-----------------')
+        if self.built:
+            for period in range(1, self.size+1):
+                for state in range(0, period+1):
+                    self.price[period] += self.lattice[state][period]
+                self.price[period] *= self.parameters.base
+                base = self.parameters.base/self.price[period]
+                exp  = 1.0/period
+                self.rates[period] = pow(base, exp) - 1.0
+                print(f'{period} | {self.price[period]:3.2f} | {self.rates[period]:5.2%}')
+        else:
+            raise Exception('build() should be called before discount()')
+
+
+    def describe(self):
+        '''Self-descriptor'''
+        super().describe('Elementary prices', None, False)
 
 
 #### Driver ####
 if __name__ == '__main__':
     ## Derivative selection ##
-    # Set either of zcb, zcbopt, caplet, floorlet, swap or swaption
-    DERIVATIVE   = 'swaption'
+    # Set either of zcb, zcbopt, caplet, floorlet, swap, swaption, elementary
+    DERIVATIVE   = 'elementary'
     LATTICE_FLAG = True # print lattice to stdout
     DERIVATIVE   = str.lower(DERIVATIVE)
 
@@ -373,6 +450,16 @@ if __name__ == '__main__':
             if LATTICE_FLAG:
                 swaption.display_lattice('Swaption', True)
             swaption.describe()
+
+    # Elementary prices
+    elif DERIVATIVE == 'elementary':
+        elementary = ElementaryPrices(ElementaryPriceParameters(ELEM_NPER, ELEM_BASE_PRICE))
+        elementary.build(term_params, short_rates)
+        if LATTICE_FLAG:
+            elementary.display_lattice('Elementary ', True)
+        elementary.describe()
+        elementary.discount()
+
 
     else:
         raise Exception(f'Non-existent DERIVATIVE value: "{DERIVATIVE}"')
