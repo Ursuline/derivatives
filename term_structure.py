@@ -28,19 +28,24 @@ TS_NPER = 5
 ZCB_FACE = 100 # Bond face value normally 100
 ZCB_NPER = 4
 
-#SWAP PARAMETERS
-FIXED_RATE   = .05
-SWAP_NPER    = 6
-
-# CAPLETS/FLOORLETS PARAMETERS
-LIBOR      = .02
-CF_NPER    = 6
-
 # Option parameters
 OP_K    = 84.0 # strike price
 OPT     = 'call' # call or put option
 OP_TYPE = 'european' # option type: european or american
 OP_NPER = 2 # expiration - accomodates diff w/ #periods in lattice (EXPO<=N)
+
+#SWAP PARAMETERS
+FIXED_RATE   = .05
+SWAP_NPER    = 6
+
+#SWAPTION PARAMETERS
+SWAPTION_K    = .00
+SWAPTION_NPER = 3
+
+# CAPLETS/FLOORLETS PARAMETERS
+LIBOR      = .02
+CF_NPER    = 6
+
 ### Derivative selection to be set in main driver ###
 
 ### SHORT RATE LATTICE ###
@@ -228,21 +233,21 @@ class CapFloorLet(lt.Lattice):
 
 
 
-#### SWAPS & SWAPTIONS ####
-class SWAPParameters(lt.Parameters):
+#### SWAPS ####
+class SwapParameters(lt.Parameters):
     '''Encapsulates parameters for swaps'''
 
     def __init__(self, swap_nper, fixed_rate):
         super().__init__(swap_nper, fixed_rate)
 
 
-    def describe(self):
+    def describe(self, percent=False, rate=None):
         ''' Prints summary parameters to stdout '''
         super().describe(True, 'Fixed')
 
 
 
-class SWAP(lt.Lattice):
+class Swap(lt.Lattice):
     '''Swap lattice '''
     def __init__(self, swap_par):
         self.swap_parameters = swap_par
@@ -250,7 +255,7 @@ class SWAP(lt.Lattice):
         self.size -= 1 # arrears
 
 
-    def build(self, ts_par, sh_rate): # build the lattice
+    def build(self, ts_par, sh_rate):
         '''Build the swap lattice'''
         rate = self.swap_parameters.rate
         for period in range(self.size, -1, -1):
@@ -271,11 +276,53 @@ class SWAP(lt.Lattice):
         super().describe('Swap', self.swap_parameters, True)
 
 
+#### SWAPTIONS ####
+class SwaptionParameters(lt.Parameters):
+    '''Encapsulates parameters for swaps'''
+
+    def __init__(self, swaption_nper, strike):
+        self.strike = strike
+        super().__init__(swaption_nper)
+
+
+    def describe(self, percent=False, rate=None):
+        ''' Prints summary parameters to stdout '''
+        print('Swaption parameters:')
+        print(f'Swaption strike: {self.strike:.2%}')
+        super().describe()
+
+
+
+class Swaption(lt.Lattice):
+    '''Swaption lattice '''
+
+    def __init__(self, swaption_pars):
+        self.swaption_parameters = swaption_pars
+        super().__init__(swaption_pars.nperiods)
+
+
+    def build(self, ts_pars, sh_rate, swap_lat):
+        '''Build the swaption lattice'''
+        for period in range(self.size, -1, -1):
+            for state in range(period, -1, -1):
+                if period == self.size:
+                    self.lattice[state][period] = max(0, swap_lat.lattice[state][period])
+                else: # discount rate
+                    num   = self._back_prop(state, period, ts_pars.rnp)
+                    denom = 1.0 + sh_rate.lattice[state][period]
+                    self.lattice[state][period] = num / denom
+
+    def describe(self):
+        '''Self-descriptor'''
+        super().describe('Swaption', self.swaption_parameters, True)
+
+
+
 #### Driver ####
 if __name__ == '__main__':
     ## Derivative selection ##
     # Set either of zcb, zcbopt, caplet, floorlet, swap or swaption
-    DERIVATIVE   = 'zcbopt'
+    DERIVATIVE   = 'swaption'
     LATTICE_FLAG = True # print lattice to stdout
     DERIVATIVE   = str.lower(DERIVATIVE)
 
@@ -283,7 +330,6 @@ if __name__ == '__main__':
     term_params = TermStructureParameters()
     short_rates = ShortRate(term_params)
     short_rates.display_lattice('Short-rate', True)
-
 
     # Zero-coupon bonds and ZCB options
     if DERIVATIVE in ('zcb', 'zcbopt'):
@@ -315,12 +361,18 @@ if __name__ == '__main__':
         cflet.describe()
 
     # Swaps & swaptions
-    elif DERIVATIVE == 'swap':
-        swap = SWAP(SWAPParameters(SWAP_NPER, FIXED_RATE))
+    elif DERIVATIVE in ('swap', 'swaption'):
+        swap = Swap(SwapParameters(SWAP_NPER, FIXED_RATE))
         swap.build(term_params, short_rates)  # compute lattice
         if LATTICE_FLAG:
-            swap.display_lattice(str.capitalize(DERIVATIVE), True)
+            swap.display_lattice('Swap', True)
         swap.describe()
+        if DERIVATIVE == 'swaption':
+            swaption = Swaption(SwaptionParameters(SWAPTION_NPER, SWAPTION_K))
+            swaption.build(term_params, short_rates, swap)  # compute lattice
+            if LATTICE_FLAG:
+                swaption.display_lattice('Swaption', True)
+            swaption.describe()
 
     else:
-        raise Exception(f'DERIVATIVE value is: "{DERIVATIVE}"')
+        raise Exception(f'Non-existent DERIVATIVE value: "{DERIVATIVE}"')
